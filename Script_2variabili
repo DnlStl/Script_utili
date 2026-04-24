@@ -1,0 +1,20 @@
+#!/bin/bash
+
+# Chiedi i valori
+read -p "inserisci var1" var1
+read -p "inserisci var2" var2
+
+#mostra minchiate prima scambio 
+echo "Prima: var1=$var1, var2=$var2"
+
+# 1. Metti il contenuto di var1 nel bicchiere vuoto (temp)
+temp=$var1
+
+# 2. Ora che var1 è "vuoto", versaci dentro var2
+var1=$var2
+
+# 3. Infine, prendi quello che avevi messo in temp e mettilo in var2
+var2=$temp
+# 4. Mostra il risultato finale
+echo "Dopo lo scambio: var1=$var1, var2=$var2"
+

@@ -1,0 +1,13 @@
+#!/bin/bash
+
+# 1. Chiedi il percorso del file originale
+read -p "Inserisci il nome del file da copiare: " file_originale
+
+# 2. Chiedi il nome della copia
+read -p "Inserisci il nome della nuova copia: " file_destinazione
+
+# 3. Esegui il comando di copia
+cp "$file_originale" "$file_destinazione"
+
+# 4. Messaggio di conferma
+echo "Operazione completata! Il file $file_originale è stato copiato in $file_destinazione."

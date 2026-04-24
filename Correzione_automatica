@@ -1,0 +1,91 @@
+#!/bin/bash
+
+# Colori
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+
+solve_typing_issues() {
+    local input_text="$1"
+    local lang="$2"
+    local corrected_text=""
+    local error_count=0
+
+    # Whitelist estesa
+    local personal_whitelist="\b(Daniele|Daniel|Sauzer|DnlStl|Lollo|Lello)\b"
+
+    for word in $input_text; do
+        clean_word=$(echo "$word" | sed "s/[[:punct:]]//g")
+        lower_word=$(echo "$clean_word" | tr '[:upper:]' '[:lower:]')
+        
+        if [[ -z "$clean_word" || "$clean_word" =~ [0-9] ]]; then
+            corrected_text="${corrected_text}${word} "
+            continue
+        fi
+
+        # 1. PROTEZIONE NOMI PROPRI (Se inizia con Maiuscola e non è a inizio frase, o è in whitelist)
+        if [[ "$clean_word" =~ ^[A-Z] ]] || [[ "$clean_word" =~ $personal_whitelist ]]; then
+            # Se la parola è nota come nickname, non toccarla
+            corrected_text="${corrected_text}${word} "
+            continue
+        fi
+
+        # 2. FIX VELOCI (Errori di vicinanza tastiera comuni)
+        suggestion=""
+        case "$lower_word" in
+            "cofe") suggestion="come" ;;
+            "aspet") suggestion="aspetta" ;;
+            "bastd"|"bastado") suggestion="bastardo" ;;
+        esac
+
+        # 3. Se non abbiamo un fix manuale, usiamo Aspell con filtro di qualità
+        if [[ -z "$suggestion" ]]; then
+            raw_suggestions=$(echo "$clean_word" | aspell -a -l "$lang" --sug-mode=ultra 2>/dev/null | grep '&' | awk -F': ' '{print $2}')
+            
+            if [[ -n "$raw_suggestions" ]]; then
+                # Scegliamo il suggerimento che ha la stessa lunghezza dell'originale (+/- 1)
+                # Questo evita che "cofe" diventi "coffe" (troppo lunga)
+                suggestion=$(echo "$raw_suggestions" | tr ',' '\n' | sed 's/^[[:space:]]*//' | awk -v orig="$clean_word" '
+                BEGIN { min_diff = 99; best = ""; }
+                {
+                    gsub(/[- ]/, "", $0);
+                    diff = length($0) - length(orig);
+                    if (diff < 0) diff = -diff;
+                    if (diff < min_diff) {
+                        min_diff = diff;
+                        best = $0;
+                    }
+                } END { print best }')
+            fi
+        fi
+
+        # 4. OUTPUT
+        if [[ -n "$suggestion" && "${suggestion,,}" != "${lower_word}" ]]; then
+            punct=$(echo "$word" | sed "s/[a-zA-Z]//g")
+            corrected_text="${corrected_text}${YELLOW}${suggestion}${punct}${NC} "
+            ((error_count++))
+            echo -e "${RED}[CORRETTO]${NC} '$clean_word' -> '${suggestion}'" >&2
+        else
+            corrected_text="${corrected_text}${word} "
+        fi
+    done
+
+    echo -e "\n${CYAN}--- TESTO FINALE ---${NC}"
+    echo -e "$corrected_text" | sed 's/[[:space:]]*$//'
+    echo -e "\n${BLUE}Totale correzioni effettuate: $error_count${NC}"
+}
+
+# --- ESECUZIONE ---
+echo -e "${BLUE}Lingua (1: it, 2: en):${NC}"
+read -p "> " lang_choice
+[[ "$lang_choice" == "2" ]] && LANG="en" || LANG="it"
+
+echo -n "Testo: "
+read -r user_input
+
+if [ -n "$user_input" ]; then
+    solve_typing_issues "$user_input" "$LANG"
+fi

@@ -1,0 +1,69 @@
+#!/bin/bash
+
+# =================================================================
+# SCRIPT: Auto_Riparante
+# AUTORE: DnlStl
+# DESCRIZIONE: Script auto-riparante con manutenzione log.
+# =================================================================
+
+GIT_USER="DnlStl"
+SCRIPT_NAME="$0"
+LOG_FILE="repair_log.txt"
+MAX_ATTEMPTS=3
+ATTEMPTS=${1:-0}
+
+# Funzione per pulire il log se diventa troppo grande
+clean_log() {
+    if [ -f "$LOG_FILE" ]; then
+        local line_count=$(wc -l < "$LOG_FILE")
+        if [ "$line_count" -gt 15 ]; then
+            echo "[$(date)] Log troppo lungo ($line_count righe). Pulizia in corso..." > "$LOG_FILE"
+        fi
+    fi
+}
+
+# Funzione di riparazione (Self-Healing)
+apply_fix() {
+    local err_code=$1
+    local line=$2
+    
+    echo "[$(date)] Errore $err_code alla riga $line - Tentativo $((ATTEMPTS+1))/$MAX_ATTEMPTS" >> "$LOG_FILE"
+
+    if [ "$ATTEMPTS" -ge "$MAX_ATTEMPTS" ]; then
+        echo "!!! Troppi tentativi falliti. Interruzione di sicurezza." >> "$LOG_FILE"
+        exit 1
+    fi
+
+    local faulty_line=$(sed -n "${line}p" "$SCRIPT_NAME")
+
+    if [ $err_code -eq 127 ]; then
+        if [[ "$faulty_line" == *"lss"* ]]; then
+            sed -i "${line}s/lss/ls/" "$SCRIPT_NAME"
+            echo "Correzione: 'lss' -> 'ls' alla riga $line" >> "$LOG_FILE"
+        elif [[ "$faulty_line" == *"ech "* || "$faulty_line" == *"ech\""* ]]; then
+            sed -i "${line}s/ech/echo/" "$SCRIPT_NAME"
+            echo "Correzione: 'ech' -> 'echo' alla riga $line" >> "$LOG_FILE"
+        elif [[ "$faulty_line" == *"stampa"* ]]; then
+            sed -i "${line}s/stampa/echo/" "$SCRIPT_NAME"
+            echo "Correzione: 'stampa' -> 'echo' alla riga $line" >> "$LOG_FILE"
+        fi
+    fi
+
+    exec bash "$SCRIPT_NAME" "$((ATTEMPTS+1))"
+}
+
+# Trap per errori
+trap 'apply_fix $? $LINENO' ERR
+
+# --- INIZIO LOGICA ---
+clean_log  # Controlla il log a ogni avvio
+
+echo "--- Inizio Script di Controllo ---"
+echo "Utente: $GIT_USER"
+
+# Comandi di lavoro
+ls -F
+echo "Esecuzione completata con successo."
+
+echo "--- Fine Script ---"
+echo "[$(date)] Successo." >> "$LOG_FILE"

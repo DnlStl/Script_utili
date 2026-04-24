@@ -1,0 +1,14 @@
+#!/bin/bash
+set-e
+tmpdir=/tmp/myscript
+mkdir -p $tmpdir
+cleanup() {
+echo "Pulizia per segnale $1 (codice $?): rimuovo $tmpdir"
+}
+trap 'cleanup INT' INT
+trap 'cleanup ERR' ERR
+trap 'cleanup TERM' TERM
+trap 'cleanup EXIT' EXIT # Sempre
+echo "Test: sleep 20, Ctrl+C o kill $BASHPID"
+sleep 20
+echo "Fatto."
