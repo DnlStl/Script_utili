@@ -1,115 +1,134 @@
 #!/bin/bash
 
-# Colori
+# --- CONFIGURAZIONE COLORI ---
+# Utilizzati per rendere l'output nel terminale leggibile e distinguere i fix
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 CYAN='\033[0;36m'
-NC='\033[0m'
-
-get_protected_names() {
-    local file="nomi_protetti.txt"
-    if [ -f "$file" ]; then
-        tr '\n' '|' < "$file" | sed 's/|*$//' | tr '[:upper:]' '[:lower:]'
-    else
-        echo "caputo|sauzer|vecio|daniele|michael|michel|michele|michelle|bomber"
-    fi
-}
+NC='\033[0m' # No Color (reset)
 
 solve_typing_issues() {
     local input_text="$1"
     local lang="$2"
     local corrected_text=""
     local error_count=0
-    local protected_list=$(get_protected_names)
     local last_word=""
 
-    # 1. PRE-CORREZIONE (Saluti, Espressioni e Tastiera)
-    input_text=$(echo "$input_text" | sed -E 's/\b(cariola|caiola|caoi|cao|caio|ciop|cia|cio)\b/ciao/gI')
-    input_text=$(echo "$input_text" | sed -E 's/\b(comsi|cosi)\b/così/gI')
-    input_text=$(echo "$input_text" | sed -E 's/\b(comsa|cosa|cosma)\b/cosà/gI')
-    input_text=$(echo "$input_text" | sed -E 's/\b(vbomer|bomer)\b/bomber/gI')
+    # 1. DIZIONARIO PERSONALIZZATO (MAPPA DEI FIX MANUALI)
+    # Questa è la "Cintura Nera" dello script. Le parole qui dentro hanno la priorità assoluta.
+    # Serve a proteggere slang, comandi SQL/Bash e nomi propri dalle allucinazioni di Aspell.
+    declare -A manual_fixes
+    manual_fixes=( 
+        ["vbomer"]="bomber" ["alero"]="albero" ["caco"]="caco" 
+        ["git"]="git" ["sudo"]="sudo" ["caio"]="ciao" ["caoi"]="ciao" 
+        ["ciop"]="ciao" ["comsi"]="così" ["comsa"]="cosà" 
+        ["vecio"]="vecio" ["log"]="log" ["reboot"]="reboot" 
+        ["python"]="python" ["bash"]="bash" ["sauzer"]="sauzer" 
+        ["selce"]="select" ["rom"]="from" ["ue"]="ue" ["pc"]="pc"
+        ["grep"]="grep" ["kernel"]="kernel" ["panic"]="panic" ["loot"]="loot"
+        ["droppato"]="droppato" ["pushato"]="pushato" ["commit"]="commit"
+        ["rebooto"]="rebooto" ["perché"]="perché" ["perche"]="perché"
+        ["fasso"]="fasso" ["funzia"]="funzia" ["magnar"]="magnar" ["switcho"]="switcho"
+    )
 
-    read -r -a words <<< "$(echo "$input_text" | tr -s ' ')"
+    # 2. RIMOZIONE BALBETII (DEDUPLICAZIONE INIZIALE)
+    # Usa sed per trovare parole identiche consecutive (es. "ciao ciao") e ne tiene solo una.
+    input_text=$(echo "$input_text" | sed -E 's/\b([a-zA-Z]+)\s+\1\b/\1/gI')
+
+    # 3. SPLIT DEL TESTO IN ARRAY
+    # Converte la stringa in una lista di parole su cui cicliamo.
+    read -r -a words <<< "$input_text"
 
     for (( i=0; i<${#words[@]}; i++ )); do
         word="${words[$i]}"
-        [ -z "$word" ] && continue
 
-        clean_word=$(echo "$word" | sed "s/[[:punct:]]//g")
-        lower_word=$(echo "$clean_word" | tr '[:upper:]' '[:lower:]')
-        
-        suggestion=""
+        # --- 4. FILTRO ANTIBOMBA (PROTEZIONE TECNICA) ---
+        # Questa Regex controlla se la parola contiene caratteri "non alfabetici" (es: / . | > - ").
+        # Se li trova, assume che sia un comando o un percorso file e NON lo processa.
+        # Eccezione: permette la punteggiatura standard alla fine della parola (es: "ciao!").
+        if [[ "$word" =~ [^a-zA-ZàèéìòùÀÈÉÌÒÙ] && ! "$word" =~ ^[a-zA-ZàèéìòùÀÈÉÌÒÙ]+[[:punct:]]$ ]]; then
+            suggestion="$word"
+        else
+            # Pulizia per il controllo: rimuove punteggiatura finale per non confondere Aspell
+            clean_word=$(echo "$word" | sed "s/[[:punct:]]*$//")
+            lower_word=$(echo "$clean_word" | tr '[:upper:]' '[:lower:]')
 
-        # 2. LOGICA CONTESTUALE (Come stai)
-        if [[ $i -gt 0 ]]; then
-            prev_lower=$(echo "${words[$((i-1))]}" | tr '[:upper:]' '[:lower:]' | sed "s/[[:punct:]]//g")
-            if [[ "$prev_lower" =~ ^(come|coem|cm)$ && "$lower_word" == "stia" ]]; then
-                suggestion="stai"
-            fi
-        fi
+            suggestion=""
 
-        # 3. WHITELIST
-        if [[ -z "$suggestion" && -n "$protected_list" && "$lower_word" =~ ^($protected_list)$ ]]; then
-            suggestion="$lower_word"
-        fi
+            # A. CONTROLLO MAPPA MANUALE
+            # Se la parola è nel nostro dizionario personalizzato, usiamo quella versione.
+            if [[ -n "${manual_fixes[$lower_word]}" ]]; then
+                suggestion="${manual_fixes[$lower_word]}"
+                # Recupera la punteggiatura originale (es: "vecio," -> virgola preservata)
+                punct=$(echo "$word" | sed "s/[a-zA-Z0-9àèéìòùÀÈÉÌÒÙ]//g")
+                suggestion="${suggestion}${punct}"
 
-        # 4. ASPELL
-        if [[ -z "$suggestion" ]]; then
-            check=$(echo "$clean_word" | aspell -a -l "$lang" 2>/dev/null | grep -E '^\*|^\+')
-            if [[ -z "$check" ]]; then
-                raw_suggestions=$(echo "$clean_word" | aspell -a -l "$lang" --sug-mode=normal 2>/dev/null | grep '&' | awk -F': ' '{print $2}')
-                suggestion=$(echo "$raw_suggestions" | tr ',' '\n' | sed 's/^[[:space:]]*//' | grep -v '^[A-Z]\{2,\}$' | head -n 1)
+            # B. CONTROLLO ASPELL (IL CORRETTORE)
+            # Solo per parole lunghe più di 3 caratteri (evita di distruggere congiunzioni o abbreviazioni).
+            elif [[ ${#clean_word} -gt 3 ]]; then
+                # Controlla se la parola è corretta nel dizionario di sistema
+                check=$(echo "$clean_word" | aspell -a -l "$lang" 2>/dev/null | grep -E '^\*|^\+')
+                if [[ -z "$check" ]]; then
+                    # Se errata, prende il primo suggerimento utile di Aspell
+                    raw_suggestions=$(echo "$clean_word" | aspell -a -l "$lang" --sug-mode=normal 2>/dev/null | grep '&' | awk -F': ' '{print $2}')
+                    suggestion=$(echo "$raw_suggestions" | tr ',' '\n' | sed 's/^[[:space:]]*//' | head -n 1)
+                    # Riattacca la punteggiatura originale
+                    punct=$(echo "$word" | sed "s/[a-zA-Z0-9àèéìòùÀÈÉÌÒÙ]//g")
+                    suggestion="${suggestion}${punct}"
+                else
+                    # Parola già corretta
+                    suggestion="$word"
+                fi
             else
-                suggestion="$clean_word"
+                # Parola troppo corta per Aspell (es: "ue", "pc")
+                suggestion="$word"
             fi
         fi
 
-        [ -z "$suggestion" ] && suggestion="$clean_word"
+        # Fallback di sicurezza: se tutto fallisce, tieni la parola originale
+        [ -z "$suggestion" ] && suggestion="$word"
 
-        # --- LOGICA ANTI-BALBETTIO (Deduplicazione) ---
-        # Se la parola corretta è uguale alla precedente, la saltiamo (tranne numeri o punteggiatura)
-        if [[ "${suggestion,,}" == "${last_word,,}" && "$suggestion" =~ [a-zA-Z] ]]; then
+        # 5. DEDUPLICAZIONE POST-CORREZIONE
+        # Evita che correzioni diverse portino alla stessa parola ripetuta (es: "caio ciao" -> "ciao ciao" -> "ciao")
+        clean_sug=$(echo "$suggestion" | tr '[:upper:]' '[:lower:]' | sed "s/[[:punct:]]//g")
+        if [[ "$clean_sug" == "$last_word" && -n "$clean_sug" ]]; then
             ((error_count++))
-            echo -e "${RED}[DUPLICATO]${NC} Rimossa ripetizione di '$suggestion'" >&2
             continue
         fi
-        last_word="$suggestion"
+        last_word="$clean_sug"
 
-        # 5. GESTIONE MAIUSCOLE
-        if [[ $i -eq 0 || -z "$corrected_text" ]]; then
-            suggestion="$(tr '[:lower:]' '[:upper:]' <<< ${suggestion:0:1})${suggestion:1}"
-        elif [[ "$clean_word" =~ ^[A-Z] ]]; then
+        # 6. GESTIONE MAIUSCOLE
+        # Capitalizza la prima parola della frase, a meno che non sia un comando o un nick protetto.
+        if [[ $i -eq 0 && ! "$suggestion" =~ ^(source|git|sudo|select|from|python|sauzer|fasso|switcho)$ ]]; then
             suggestion="$(tr '[:lower:]' '[:upper:]' <<< ${suggestion:0:1})${suggestion:1}"
         fi
 
-        # 6. OUTPUT E LOG
-        orig_word=$(echo "$input_text" | awk -v idx=$idx_orig '{print $idx}' | sed "s/[[:punct:]]//g")
-        punct=$(echo "$word" | sed "s/[a-zA-Z]//g")
-
-        if [[ "${suggestion,,}" != "${lower_word}" ]]; then
-            corrected_text="${corrected_text}${YELLOW}${suggestion}${punct}${NC} "
+        # 7. LOG DELLE MODIFICHE E COSTRUZIONE OUTPUT
+        if [[ "${suggestion,,}" != "${word,,}" ]]; then
+            # Parola modificata: evidenziata in giallo e loggata
+            corrected_text="${corrected_text}${YELLOW}${suggestion}${NC} "
             ((error_count++))
-            echo -e "${RED}[FIX]${NC} '$clean_word' -> '${suggestion}'" >&2
+            echo -e "${RED}[FIX]${NC} '$word' -> '${suggestion}'" >&2
         else
-            corrected_text="${corrected_text}${suggestion}${punct} "
+            # Parola originale: aggiunta normalmente
+            corrected_text="${corrected_text}${suggestion} "
         fi
     done
 
+    # 8. STAMPA RISULTATI FINALI
     echo -e "\n${CYAN}--- TESTO FINALE ---${NC}"
     echo -e "$corrected_text" | sed 's/[[:space:]]*$//'
     echo -e "\n${BLUE}Totale correzioni effettuate: $error_count${NC}"
 }
 
-# --- ESECUZIONE ---
+# --- LOGICA DI AVVIO ---
 echo -e "${BLUE}Lingua (1: it, 2: en):${NC}"
 read -p "> " lang_choice
 [[ "$lang_choice" == "2" ]] && LANG="en" || LANG="it"
 
 echo -n "Testo: "
+# 'read -r' preserva i backslash, utile per input tecnici
 read -r user_input
-
-if [ -n "$user_input" ]; then
-    solve_typing_issues "$user_input" "$LANG"
-fi
+[ -n "$user_input" ] && solve_typing_issues "$user_input" "$LANG"
