@@ -8,68 +8,92 @@ BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
+get_protected_names() {
+    local file="nomi_protetti.txt"
+    if [ -f "$file" ]; then
+        tr '\n' '|' < "$file" | sed 's/|*$//' | tr '[:upper:]' '[:lower:]'
+    else
+        echo "caputo|sauzer|vecio|daniele|michael|michel|michele|michelle|bomber"
+    fi
+}
+
 solve_typing_issues() {
     local input_text="$1"
     local lang="$2"
     local corrected_text=""
     local error_count=0
+    local protected_list=$(get_protected_names)
+    local last_word=""
 
-    # Whitelist estesa
-    local personal_whitelist="\b(Daniele|Daniel|Sauzer|DnlStl|Lollo|Lello)\b"
+    # 1. PRE-CORREZIONE (Saluti, Espressioni e Tastiera)
+    input_text=$(echo "$input_text" | sed -E 's/\b(cariola|caiola|caoi|cao|caio|ciop|cia|cio)\b/ciao/gI')
+    input_text=$(echo "$input_text" | sed -E 's/\b(comsi|cosi)\b/così/gI')
+    input_text=$(echo "$input_text" | sed -E 's/\b(comsa|cosa|cosma)\b/cosà/gI')
+    input_text=$(echo "$input_text" | sed -E 's/\b(vbomer|bomer)\b/bomber/gI')
 
-    for word in $input_text; do
+    read -r -a words <<< "$(echo "$input_text" | tr -s ' ')"
+
+    for (( i=0; i<${#words[@]}; i++ )); do
+        word="${words[$i]}"
+        [ -z "$word" ] && continue
+
         clean_word=$(echo "$word" | sed "s/[[:punct:]]//g")
         lower_word=$(echo "$clean_word" | tr '[:upper:]' '[:lower:]')
         
-        if [[ -z "$clean_word" || "$clean_word" =~ [0-9] ]]; then
-            corrected_text="${corrected_text}${word} "
-            continue
-        fi
-
-        # 1. PROTEZIONE NOMI PROPRI (Se inizia con Maiuscola e non è a inizio frase, o è in whitelist)
-        if [[ "$clean_word" =~ ^[A-Z] ]] || [[ "$clean_word" =~ $personal_whitelist ]]; then
-            # Se la parola è nota come nickname, non toccarla
-            corrected_text="${corrected_text}${word} "
-            continue
-        fi
-
-        # 2. FIX VELOCI (Errori di vicinanza tastiera comuni)
         suggestion=""
-        case "$lower_word" in
-            "cofe") suggestion="come" ;;
-            "aspet") suggestion="aspetta" ;;
-            "bastd"|"bastado") suggestion="bastardo" ;;
-        esac
 
-        # 3. Se non abbiamo un fix manuale, usiamo Aspell con filtro di qualità
-        if [[ -z "$suggestion" ]]; then
-            raw_suggestions=$(echo "$clean_word" | aspell -a -l "$lang" --sug-mode=ultra 2>/dev/null | grep '&' | awk -F': ' '{print $2}')
-            
-            if [[ -n "$raw_suggestions" ]]; then
-                # Scegliamo il suggerimento che ha la stessa lunghezza dell'originale (+/- 1)
-                # Questo evita che "cofe" diventi "coffe" (troppo lunga)
-                suggestion=$(echo "$raw_suggestions" | tr ',' '\n' | sed 's/^[[:space:]]*//' | awk -v orig="$clean_word" '
-                BEGIN { min_diff = 99; best = ""; }
-                {
-                    gsub(/[- ]/, "", $0);
-                    diff = length($0) - length(orig);
-                    if (diff < 0) diff = -diff;
-                    if (diff < min_diff) {
-                        min_diff = diff;
-                        best = $0;
-                    }
-                } END { print best }')
+        # 2. LOGICA CONTESTUALE (Come stai)
+        if [[ $i -gt 0 ]]; then
+            prev_lower=$(echo "${words[$((i-1))]}" | tr '[:upper:]' '[:lower:]' | sed "s/[[:punct:]]//g")
+            if [[ "$prev_lower" =~ ^(come|coem|cm)$ && "$lower_word" == "stia" ]]; then
+                suggestion="stai"
             fi
         fi
 
-        # 4. OUTPUT
-        if [[ -n "$suggestion" && "${suggestion,,}" != "${lower_word}" ]]; then
-            punct=$(echo "$word" | sed "s/[a-zA-Z]//g")
+        # 3. WHITELIST
+        if [[ -z "$suggestion" && -n "$protected_list" && "$lower_word" =~ ^($protected_list)$ ]]; then
+            suggestion="$lower_word"
+        fi
+
+        # 4. ASPELL
+        if [[ -z "$suggestion" ]]; then
+            check=$(echo "$clean_word" | aspell -a -l "$lang" 2>/dev/null | grep -E '^\*|^\+')
+            if [[ -z "$check" ]]; then
+                raw_suggestions=$(echo "$clean_word" | aspell -a -l "$lang" --sug-mode=normal 2>/dev/null | grep '&' | awk -F': ' '{print $2}')
+                suggestion=$(echo "$raw_suggestions" | tr ',' '\n' | sed 's/^[[:space:]]*//' | grep -v '^[A-Z]\{2,\}$' | head -n 1)
+            else
+                suggestion="$clean_word"
+            fi
+        fi
+
+        [ -z "$suggestion" ] && suggestion="$clean_word"
+
+        # --- LOGICA ANTI-BALBETTIO (Deduplicazione) ---
+        # Se la parola corretta è uguale alla precedente, la saltiamo (tranne numeri o punteggiatura)
+        if [[ "${suggestion,,}" == "${last_word,,}" && "$suggestion" =~ [a-zA-Z] ]]; then
+            ((error_count++))
+            echo -e "${RED}[DUPLICATO]${NC} Rimossa ripetizione di '$suggestion'" >&2
+            continue
+        fi
+        last_word="$suggestion"
+
+        # 5. GESTIONE MAIUSCOLE
+        if [[ $i -eq 0 || -z "$corrected_text" ]]; then
+            suggestion="$(tr '[:lower:]' '[:upper:]' <<< ${suggestion:0:1})${suggestion:1}"
+        elif [[ "$clean_word" =~ ^[A-Z] ]]; then
+            suggestion="$(tr '[:lower:]' '[:upper:]' <<< ${suggestion:0:1})${suggestion:1}"
+        fi
+
+        # 6. OUTPUT E LOG
+        orig_word=$(echo "$input_text" | awk -v idx=$idx_orig '{print $idx}' | sed "s/[[:punct:]]//g")
+        punct=$(echo "$word" | sed "s/[a-zA-Z]//g")
+
+        if [[ "${suggestion,,}" != "${lower_word}" ]]; then
             corrected_text="${corrected_text}${YELLOW}${suggestion}${punct}${NC} "
             ((error_count++))
-            echo -e "${RED}[CORRETTO]${NC} '$clean_word' -> '${suggestion}'" >&2
+            echo -e "${RED}[FIX]${NC} '$clean_word' -> '${suggestion}'" >&2
         else
-            corrected_text="${corrected_text}${word} "
+            corrected_text="${corrected_text}${suggestion}${punct} "
         fi
     done
 
